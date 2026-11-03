@@ -80,6 +80,9 @@ enum AppLanguage: String, CaseIterable, Identifiable {
     enum Key {
         case appTitle, today, past, updating, loading, updated, new, empty, emptyPast, gathering,
              aiOn, basic, markAllRead, quit, translating, translateFailed, offline, stories,
+             searchPlaceholder, noResults, saved, emptySaved, bookmark, unbookmark, briefing, briefingNeedsKey,
+             notifyBriefing, shortcuts, results,
+             back, openOriginal, openTranslatedWeb, fetchingArticle, translatingArticle, articleUnavailable, keyPoints, fullArticle,
              settingsAI, settingsAIBody, keySaved, removeKey, save, sources, sourcesNote, language, launchAtLogin, notifyBig, bigNews, official, outlets
     }
 
@@ -104,6 +107,31 @@ enum AppLanguage: String, CaseIterable, Identifiable {
         case .translateFailed: return ko ? "번역에 실패했어요" : "Translation failed"
         case .offline: return ko ? "뉴스를 불러오지 못했어요. 인터넷 연결을 확인해 주세요." : "Couldn't reach news sources. Check your connection."
         case .stories: return ko ? "개" : "stories"
+        case .searchPlaceholder: return ko ? "지난 30일 뉴스 검색" : "Search the last 30 days"
+        case .noResults: return ko ? "검색 결과가 없어요." : "No matching stories."
+        case .results: return ko ? "건" : "results"
+        case .saved: return ko ? "저장됨" : "Saved"
+        case .emptySaved: return ko
+            ? "기사에서 북마크를 누르거나 B 키를 누르면 여기에 모여요. 저장한 기사는 30일이 지나도 남아요."
+            : "Bookmark a story (or press B) to keep it here. Saved stories never expire."
+        case .bookmark: return ko ? "저장" : "Save"
+        case .unbookmark: return ko ? "저장 해제" : "Remove from Saved"
+        case .briefing: return ko ? "오늘의 브리핑" : "Today's briefing"
+        case .briefingNeedsKey: return ko
+            ? "API 키를 넣으면 Claude가 오늘의 핵심을 정리해 줘요."
+            : "Add an API key and Claude will write a briefing of the day."
+        case .notifyBriefing: return ko ? "아침 브리핑 알림 (오전 7시 이후)" : "Morning briefing notification (after 7 AM)"
+        case .shortcuts: return ko ? "키보드 단축키" : "Keyboard shortcuts"
+        case .back: return ko ? "목록" : "Back"
+        case .openOriginal: return ko ? "원문 보기" : "Open original"
+        case .openTranslatedWeb: return ko ? "웹 번역으로 보기" : "View web translation"
+        case .fetchingArticle: return ko ? "기사 본문을 가져오는 중…" : "Fetching the article…"
+        case .translatingArticle: return ko ? "본문 번역 중" : "Translating"
+        case .articleUnavailable: return ko
+            ? "이 사이트는 본문을 앱에서 불러올 수 없어요. 아래 버튼으로 번역된 웹페이지를 열 수 있어요."
+            : "This site doesn't allow loading the article in the app."
+        case .keyPoints: return ko ? "핵심 요약" : "Key points"
+        case .fullArticle: return ko ? "기사 본문" : "Full article"
         case .settingsAI: return ko ? "AI 요약" : "AI summaries"
         case .settingsAIBody: return ko
             ? "키가 없으면 언론사 기사 첫 문장을 보여줘요. Anthropic API 키를 넣으면 Claude가 새 기사마다 짧고 중립적인 요약을 쓰고, 주제를 분류하고, 광고성 글을 숨겨요. 요약은 저장되므로 기사당 한 번만 요청해요."
@@ -140,10 +168,29 @@ struct Article: Identifiable, Hashable, Codable {
 /// Cached result of summarizing one article (persisted so we never re-summarize).
 struct SummaryInfo: Codable {
     let summary: String
+    /// Key points shown under the headline (nil for summaries cached before bullets existed).
+    var bullets: [String]?
     let category: NewsCategory
     let promotional: Bool
     /// Claude's judgment that this is major AI news (nil for summaries cached before this existed).
     var major: Bool?
+    /// Whether Claude read the full article body (vs. only the RSS excerpt).
+    var fromBody: Bool? = nil
+}
+
+/// The day's top developments, written by Claude (stored so it survives relaunches).
+struct Briefing: Codable {
+    struct Point: Codable, Hashable {
+        let en: String
+        let ko: String
+        /// Articles this point is based on.
+        let links: [String]
+    }
+    let generated: Date
+    let storyCount: Int
+    let headlineEN: String
+    let headlineKO: String
+    let points: [Point]
 }
 
 enum Pastel {
