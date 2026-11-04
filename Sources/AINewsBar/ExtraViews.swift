@@ -35,14 +35,16 @@ struct SearchList: View {
             EmptyState(symbol: "questionmark.circle", text: lang.t(.noResults))
         } else {
             SelectionScroll {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    Text(lang == .ko ? "검색 결과 \(results.count)건 · ↑↓ 이동 · ↵ 열기" : "\(results.count) results · ↑↓ move · ↵ open")
-                        .font(.system(size: 10.5, design: .rounded)).foregroundStyle(Pastel.subInk)
-                        .padding(.leading, 4)
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    HStack {
+                        Text(lang == .ko ? "검색 결과 \(results.count)건" : "\(results.count) results")
+                            .font(.system(size: 12, weight: .bold)).foregroundStyle(Pastel.ink)
+                        Spacer()
+                        Text("↑↓ · ↵").font(.system(size: 11)).foregroundStyle(Pastel.subInk)
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 6)
                     ForEach(results) { ArticleCard(article: $0, showCategory: true) }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
             }
         }
     }
@@ -60,11 +62,11 @@ struct SavedList: View {
             EmptyState(symbol: "bookmark", text: store.language.t(.emptySaved))
         } else {
             SelectionScroll {
-                LazyVStack(alignment: .leading, spacing: 8) {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    SectionTitle(title: store.language.t(.saved), count: items.count,
+                                 symbol: "bookmark.fill", symbolColor: Pastel.accent)
                     ForEach(items) { ArticleCard(article: $0, showCategory: true) }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
             }
         }
     }
@@ -87,7 +89,7 @@ struct BriefingCard: View {
                         Image(systemName: "sun.horizon.fill").font(.system(size: 11))
                             .foregroundStyle(Pastel.gold)
                         Text(lang.t(.briefing))
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .font(.system(size: 12.5, weight: .bold))
                             .foregroundStyle(Pastel.ink)
                         if b.byClaude {
                             Image(systemName: "wand.and.stars").font(.system(size: 9.5))
@@ -105,7 +107,7 @@ struct BriefingCard: View {
                 .buttonStyle(.plain)
 
                 Text(b.headline)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 15, weight: .bold))
                     .foregroundStyle(Pastel.ink)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -121,15 +123,9 @@ struct BriefingCard: View {
                     }
                 }
             }
-            .padding(12)
+            .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(LinearGradient(colors: [Pastel.sky.opacity(0.55), Pastel.mint.opacity(0.45)],
-                                         startPoint: .topLeading, endPoint: .bottomTrailing))
-            )
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Pastel.sky, lineWidth: 0.8))
-            .padding(.bottom, 4)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Pastel.sky.opacity(0.7)))
         }
     }
 }
@@ -148,8 +144,8 @@ private struct BriefingPoint: View {
                 Circle().fill(Pastel.ink.opacity(0.45)).frame(width: 4.5, height: 4.5)
                     .alignmentGuide(.firstTextBaseline) { $0[.bottom] + 12 * 0.28 }
                 Text(text)
-                    .font(.system(size: 12))
-                    .foregroundStyle(Pastel.ink.opacity(0.85))
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Pastel.body)
                     .underline(hover && article != nil, color: Pastel.ink.opacity(0.4))
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
@@ -187,8 +183,7 @@ struct ShortcutsTable: View {
                         .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                         .foregroundStyle(Pastel.ink.opacity(0.8))
                         .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.9)))
-                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Pastel.lavender, lineWidth: 0.6))
+                        .background(RoundedRectangle(cornerRadius: 5).fill(Pastel.fill))
                     Text(label).font(.system(size: 11.5)).foregroundStyle(Pastel.subInk)
                 }
             }

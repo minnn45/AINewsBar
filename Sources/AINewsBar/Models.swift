@@ -9,6 +9,21 @@ struct FeedSource: Identifiable, Hashable {
     /// First-party announcements from an AI lab (vs. journalism).
     var official = false
 
+    /// Short label for the round avatar in the feed.
+    var initials: String {
+        switch id {
+        case "openai": return "OA"
+        case "deepmind": return "DM"
+        case "googleai": return "G"
+        case "techcrunch": return "TC"
+        case "verge": return "V"
+        case "mittr": return "MIT"
+        case "ars": return "A"
+        case "wired": return "W"
+        default: return String(name.prefix(1))
+        }
+    }
+
     static let all: [FeedSource] = [
         // Official lab announcements
         .init(id: "openai", name: "OpenAI",
@@ -204,6 +219,13 @@ enum Pastel {
     static let aqua     = Color(red: 0.78, green: 0.92, blue: 0.94)
     static let apricot  = Color(red: 0.99, green: 0.90, blue: 0.74)
     static let gold     = Color(red: 0.96, green: 0.80, blue: 0.45)
-    static let ink      = Color(red: 0.22, green: 0.23, blue: 0.30)
-    static let subInk   = Color(red: 0.48, green: 0.49, blue: 0.56)
+    // Neutral frame (clean, Figma-kit style): near-black text, light gray fills, hairline borders.
+    static let ink      = Color(red: 0.086, green: 0.094, blue: 0.137)   // #161823
+    static let body     = Color(red: 0.29, green: 0.30, blue: 0.34)      // bullet / body text
+    static let subInk   = Color(red: 0.54, green: 0.55, blue: 0.58)      // #8A8C93
+    static let line     = Color(red: 0.902, green: 0.902, blue: 0.902)   // #E6E6E6
+    static let divider  = Color(red: 0.937, green: 0.937, blue: 0.945)   // #EFEFF1
+    static let fill     = Color(red: 0.961, green: 0.961, blue: 0.961)   // #F5F5F5
+    /// Deeper lavender for the few places that need a clear accent (tab underline, selection, unread dot).
+    static let accent   = Color(red: 0.55, green: 0.48, blue: 0.86)
 }

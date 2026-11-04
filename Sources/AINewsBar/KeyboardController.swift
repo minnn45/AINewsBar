@@ -177,11 +177,11 @@ struct SearchBar: View {
 
     var body: some View {
         HStack(spacing: 7) {
-            Image(systemName: "magnifyingglass").font(.system(size: 11.5, weight: .medium))
+            Image(systemName: "magnifyingglass").font(.system(size: 13, weight: .medium))
                 .foregroundStyle(Pastel.subInk)
             TextField(placeholder, text: $text)
                 .textFieldStyle(.plain)
-                .font(.system(size: 12.5))
+                .font(.system(size: 13))
                 .foregroundStyle(Pastel.ink)
                 .focused($focused)
                 .onSubmit {
@@ -196,14 +196,15 @@ struct SearchBar: View {
             }
             Button(closeLabel) { ui.closeSearch() }
                 .buttonStyle(.plain)
-                .font(.system(size: 11, weight: .medium, design: .rounded))
-                .foregroundStyle(Pastel.ink.opacity(0.6))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Pastel.ink.opacity(0.75))
         }
-        .padding(.horizontal, 11).padding(.vertical, 7)
-        .background(Capsule().fill(Color.white.opacity(0.9)))
-        .overlay(Capsule().stroke(Pastel.lavender.opacity(0.9), lineWidth: 0.8))
+        .padding(.horizontal, 12)
+        .frame(height: 34)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Pastel.fill))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Pastel.lavender.mix(with: Pastel.ink, by: 0.1), lineWidth: 1))
         .padding(.horizontal, 16)
-        .padding(.bottom, 8)
+        .padding(.bottom, 10)
         .onAppear { text = ui.query; focused = true }
         .onChange(of: ui.focusSearchToken) { focused = true }
         // Search runs 150 ms after typing stops.

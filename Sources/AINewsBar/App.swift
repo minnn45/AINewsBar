@@ -6,6 +6,15 @@ import Translation
 struct AINewsBarApp: App {
     @StateObject private var store = NewsStore()
 
+    init() {
+        // Debug: `AINewsBar --snapshot out.png [ko] [reader]` renders the popover offscreen and quits.
+        let args = CommandLine.arguments
+        if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {
+            Snapshot.schedule(path: args[i + 1], ko: args.contains("ko"), reader: args.contains("reader"),
+                              height: args.contains("tall") ? 1500 : 600)
+        }
+    }
+
     var body: some Scene {
         MenuBarExtra {
             ContentView()
@@ -42,7 +51,10 @@ struct ContentView: View {
             } else {
                 if ui.searching {
                     SearchBar(ui: ui, placeholder: lang.t(.searchPlaceholder), closeLabel: lang == .ko ? "닫기" : "Close")
-                } else { tabs }
+                } else {
+                    searchPlaceholder
+                    tabs
+                }
                 chips
                 if lang == .ko && store.translationReady == false { LanguagePackBanner() }
                 Group {
@@ -60,11 +72,8 @@ struct ContentView: View {
                 footer
             }
         }
-        .frame(width: 400, height: 600)
-        .background(
-            LinearGradient(colors: [.white, Pastel.lavender.opacity(0.35), Pastel.mint.opacity(0.30)],
-                           startPoint: .top, endPoint: .bottom)
-        )
+        .frame(width: 400, height: Snapshot.height)
+        .background(Color.white)
         // On-device English → Korean translation (Apple Translation framework).
         .translationTask(translationConfig) { session in
             await store.translatePending(using: session)
@@ -99,27 +108,23 @@ struct ContentView: View {
     private var header: some View {
         HStack(spacing: 10) {
             ZStack {
-                Circle().fill(LinearGradient(colors: [Pastel.lavender, Pastel.sky],
-                                             startPoint: .topLeading, endPoint: .bottomTrailing))
+                RoundedRectangle(cornerRadius: 8).fill(Pastel.lavender)
                 Image(systemName: "sparkles").font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Pastel.ink.opacity(0.75))
+                    .foregroundStyle(Pastel.ink.opacity(0.8))
             }
             .frame(width: 30, height: 30)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(lang.t(.appTitle)).font(.system(size: 15, weight: .semibold, design: .rounded))
+                Text(lang.t(.appTitle)).font(.system(size: 16, weight: .bold))
                     .foregroundStyle(Pastel.ink)
-                Text(subtitle).font(.system(size: 10.5)).foregroundStyle(Pastel.subInk)
+                Text(subtitle).font(.system(size: 11)).foregroundStyle(Pastel.subInk)
             }
             Spacer()
             LanguageToggle()
-            IconButton(system: ui.searching ? "magnifyingglass.circle.fill" : "magnifyingglass") {
-                ui.searching ? ui.closeSearch() : ui.openSearch()
-            }
-            .help(lang == .ko ? "검색 (⌘F)" : "Search (⌘F)")
             IconButton(system: "arrow.clockwise", spinning: store.isLoading) {
                 Task { await store.refresh() }
             }
+            .help(lang == .ko ? "새로고침 (R)" : "Refresh (R)")
             IconButton(system: ui.showSettings ? "xmark" : "gearshape") {
                 withAnimation(.easeInOut(duration: 0.15)) { ui.showSettings.toggle() }
             }
@@ -130,7 +135,7 @@ struct ContentView: View {
         }
         .padding(.horizontal, 16)
         .padding(.top, 14)
-        .padding(.bottom, 10)
+        .padding(.bottom, 12)
     }
 
     private var subtitle: String {
@@ -142,52 +147,83 @@ struct ContentView: View {
         return "\(lang.t(.updated)) \(time)" + (unread > 0 ? " · \(unread) \(lang.t(.new))" : "")
     }
 
-    // MARK: Tabs & chips
+    // MARK: Search field, tabs & chips
 
-    private var tabs: some View {
-        HStack(spacing: 4) {
-            tabButton(.today, lang.t(.today), "sun.max")
-            tabButton(.past, lang.t(.past), "calendar")
-            tabButton(.saved, lang.t(.saved), "bookmark")
+    /// Looks like the search field; clicking it (or ⌘F) switches to the real one.
+    private var searchPlaceholder: some View {
+        Button { ui.openSearch() } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Pastel.subInk)
+                Text(lang.t(.searchPlaceholder)).font(.system(size: 13)).foregroundStyle(Pastel.subInk)
+                Spacer()
+                Text("⌘F").font(.system(size: 10.5, weight: .medium)).foregroundStyle(Pastel.subInk.opacity(0.8))
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 34)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Pastel.fill))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
         }
-        .padding(3)
-        .background(Capsule().fill(Color.white.opacity(0.75)))
-        .overlay(Capsule().stroke(Pastel.lavender.opacity(0.8), lineWidth: 0.6))
+        .buttonStyle(.plain)
         .padding(.horizontal, 16)
-        .padding(.bottom, 8)
+        .padding(.bottom, 4)
     }
 
-    private func tabButton(_ t: Tab, _ label: String, _ symbol: String) -> some View {
-        Button { withAnimation(.easeInOut(duration: 0.15)) { ui.tab = t } } label: {
-            Label(label, systemImage: symbol)
-                .font(.system(size: 12, weight: ui.tab == t ? .semibold : .regular, design: .rounded))
-                .foregroundStyle(Pastel.ink.opacity(ui.tab == t ? 1 : 0.6))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 5)
-                .background(Capsule().fill(ui.tab == t ? Pastel.lavender : .clear))
-                .contentShape(Capsule())
+    /// Text tabs with an underline, like a feed's 팔로잉 / 추천 / 즐겨찾기 tabs.
+    private var tabs: some View {
+        HStack(spacing: 0) {
+            tabButton(.today, lang.t(.today))
+            tabButton(.past, lang.t(.past))
+            tabButton(.saved, lang.t(.saved))
+        }
+        .padding(.horizontal, 16)
+        .overlay(alignment: .bottom) { Rectangle().fill(Pastel.divider).frame(height: 1) }
+        .padding(.bottom, 10)
+    }
+
+    private func tabButton(_ t: Tab, _ label: String) -> some View {
+        let active = ui.tab == t
+        return Button { withAnimation(.easeInOut(duration: 0.15)) { ui.tab = t } } label: {
+            VStack(spacing: 7) {
+                Text(label)
+                    .font(.system(size: 13.5, weight: active ? .bold : .medium))
+                    .foregroundStyle(active ? Pastel.ink : Pastel.subInk)
+                Rectangle().fill(active ? Pastel.accent : .clear)
+                    .frame(width: 36, height: 2)
+            }
+            .padding(.top, 8)
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
+    /// Outlined pills with icons; the selected one is filled with a pastel.
     private var chips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 ForEach(NewsCategory.allCases) { c in
+                    let active = ui.category == c
                     Button { ui.category = c } label: {
-                        Text(c.name(lang))
-                            .font(.system(size: 11.5, weight: ui.category == c ? .semibold : .regular, design: .rounded))
-                            .foregroundStyle(Pastel.ink.opacity(ui.category == c ? 1 : 0.7))
-                            .padding(.horizontal, 11).padding(.vertical, 5)
-                            .background(Capsule().fill(ui.category == c ? Pastel.mint : Color.white.opacity(0.8)))
-                            .overlay(Capsule().stroke(Pastel.mint.opacity(0.9), lineWidth: 0.6))
+                        HStack(spacing: 4) {
+                            Image(systemName: c.symbol).font(.system(size: 10.5, weight: .medium))
+                            Text(c.name(lang)).font(.system(size: 12, weight: active ? .semibold : .regular))
+                        }
+                        .foregroundStyle(active ? Pastel.ink : Pastel.ink.opacity(0.75))
+                        .padding(.horizontal, 10)
+                        .frame(height: 28)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(active ? Pastel.mint : Color.white))
+                        .overlay(RoundedRectangle(cornerRadius: 8)
+                            .stroke(active ? Pastel.mint.mix(with: Pastel.ink, by: 0.15) : Pastel.line, lineWidth: 1))
+                        .contentShape(RoundedRectangle(cornerRadius: 8))
                     }
                     .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal, 16)
+            .padding(.vertical, 1)
         }
-        .padding(.bottom, 8)
+        .padding(.bottom, 6)
     }
 
     // MARK: Footer
@@ -195,32 +231,32 @@ struct ContentView: View {
     private var footer: some View {
         VStack(spacing: 0) {
             if let err = store.errorMessage {
-                Text(err).font(.system(size: 10.5)).foregroundStyle(Color(red: 0.75, green: 0.35, blue: 0.4))
-                    .lineLimit(2).padding(.horizontal, 16).padding(.vertical, 6)
+                Text(err).font(.system(size: 11)).foregroundStyle(Color(red: 0.72, green: 0.3, blue: 0.36))
+                    .lineLimit(2).padding(.horizontal, 16).padding(.vertical, 7)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Pastel.rose.opacity(0.4))
+                    .background(Pastel.rose.opacity(0.45))
             }
-            HStack {
+            HStack(spacing: 10) {
                 Label(store.hasAPIKey ? lang.t(.aiOn) : lang.t(.basic),
                       systemImage: store.hasAPIKey ? "wand.and.stars" : "text.alignleft")
-                    .font(.system(size: 10.5)).foregroundStyle(Pastel.subInk)
+                    .font(.system(size: 11)).foregroundStyle(Pastel.subInk)
                 Spacer()
                 Button(lang.t(.markAllRead)) { store.markAllRead() }
-                    .buttonStyle(.plain).font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(Pastel.ink.opacity(0.7))
-                Text("·").foregroundStyle(Pastel.subInk)
+                    .buttonStyle(.plain).font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Pastel.ink.opacity(0.75))
                 Button(lang.t(.quit)) { NSApp.terminate(nil) }
-                    .buttonStyle(.plain).font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(Pastel.ink.opacity(0.7))
+                    .buttonStyle(.plain).font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Pastel.ink.opacity(0.75))
             }
-            .padding(.horizontal, 16).padding(.vertical, 9)
-            .background(Color.white.opacity(0.85))
+            .padding(.horizontal, 16).padding(.vertical, 10)
+            .overlay(alignment: .top) { Rectangle().fill(Pastel.divider).frame(height: 1) }
         }
     }
 }
 
 // MARK: - Language toggle
 
+/// Segmented control: gray track, white selected segment.
 struct LanguageToggle: View {
     @EnvironmentObject var store: NewsStore
 
@@ -230,21 +266,45 @@ struct LanguageToggle: View {
             option(.ko, "한")
         }
         .padding(2)
-        .background(Capsule().fill(Color.white.opacity(0.8)))
-        .overlay(Capsule().stroke(Pastel.lavender, lineWidth: 0.6))
+        .background(RoundedRectangle(cornerRadius: 7).fill(Pastel.fill))
         .help(store.language == .ko ? "언어 전환" : "Switch language")
     }
 
     private func option(_ l: AppLanguage, _ label: String) -> some View {
-        Button { store.language = l } label: {
+        let active = store.language == l
+        return Button { store.language = l } label: {
             Text(label)
-                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
-                .foregroundStyle(Pastel.ink.opacity(store.language == l ? 1 : 0.5))
-                .frame(width: 24, height: 20)
-                .background(Capsule().fill(store.language == l ? Pastel.peach : .clear))
-                .contentShape(Capsule())
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(active ? Pastel.ink : Pastel.subInk)
+                .frame(width: 26, height: 22)
+                .background(RoundedRectangle(cornerRadius: 5).fill(active ? Pastel.peach : .clear))
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// Bold section title, like "제목 ›" in a mobile kit.
+struct SectionTitle: View {
+    let title: String
+    var count: Int? = nil
+    var symbol: String? = nil
+    var symbolColor: Color = Pastel.subInk
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if let symbol {
+                Image(systemName: symbol).font(.system(size: 11, weight: .semibold)).foregroundStyle(symbolColor)
+            }
+            Text(title).font(.system(size: 15, weight: .bold)).foregroundStyle(Pastel.ink)
+            if let count {
+                Text("\(count)").font(.system(size: 12, weight: .medium)).foregroundStyle(Pastel.subInk)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 2)
     }
 }
 
@@ -262,33 +322,25 @@ struct TodayList: View {
                        text: store.isLoading ? store.language.t(.gathering) : store.language.t(.empty))
         } else {
             SelectionScroll {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    if category == .all { BriefingCard() }
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if category == .all { BriefingCard().padding(.horizontal, 16).padding(.top, 4) }
                     if !big.isEmpty {
-                        HStack(spacing: 5) {
-                            Image(systemName: "star.fill").font(.system(size: 10))
-                                .foregroundStyle(Pastel.gold)
-                            Text(store.language.t(.bigNews))
-                                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                                .foregroundStyle(Pastel.ink)
+                        SectionTitle(title: store.language.t(.bigNews), count: big.count,
+                                     symbol: "star.fill", symbolColor: Pastel.gold)
+                        VStack(spacing: 8) {
+                            ForEach(big) { ArticleCard(article: $0, showCategory: true, featured: true) }
                         }
-                        .padding(.leading, 4)
-                        ForEach(big) { ArticleCard(article: $0, showCategory: true, featured: true) }
-
-                        if !items.isEmpty {
-                            HStack(spacing: 5) {
-                                Image(systemName: "newspaper").font(.system(size: 10))
-                                Text(store.language.t(.today))
-                                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                            }
-                            .foregroundStyle(Pastel.subInk)
-                            .padding(.leading, 4).padding(.top, 6)
-                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
                     }
-                    ForEach(items) { ArticleCard(article: $0, showCategory: true) }
+                    if !items.isEmpty {
+                        if !big.isEmpty || category == .all {
+                            SectionTitle(title: store.language.t(.today), count: items.count)
+                        }
+                        ForEach(items) { ArticleCard(article: $0, showCategory: true) }
+                    }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
+                .padding(.bottom, 8)
             }
         }
     }
@@ -310,7 +362,7 @@ struct PastList: View {
             EmptyState(symbol: "calendar", text: lang.t(.emptyPast))
         } else {
             SelectionScroll {
-                LazyVStack(alignment: .leading, spacing: 10) {
+                LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(days.enumerated()), id: \.element.id) { index, day in
                         // Most recent day starts open, older days start folded; keyboard selection opens its day.
                         let holdsSelection = day.groups.contains { $0.articles.contains { $0.link == store.selectedLink } }
@@ -324,8 +376,7 @@ struct PastList: View {
                         }
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
+                .padding(.bottom, 8)
             }
         }
     }
@@ -338,35 +389,34 @@ struct PastList: View {
             }
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .bold))
-                    .rotationEffect(.degrees(isOpen ? 90 : 0))
-                    .foregroundStyle(Pastel.subInk)
                 Text(dayTitle(day.day))
-                    .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                    .font(.system(size: 15, weight: .bold))
                     .foregroundStyle(Pastel.ink)
+                Text("\(day.count)").font(.system(size: 12, weight: .medium)).foregroundStyle(Pastel.subInk)
                 Spacer()
-                Text("\(day.count) \(lang.t(.stories))")
-                    .font(.system(size: 10.5, design: .rounded)).foregroundStyle(Pastel.subInk)
-                    .padding(.horizontal, 8).padding(.vertical, 2)
-                    .background(Capsule().fill(Pastel.butter))
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9.5, weight: .bold))
+                    .rotationEffect(.degrees(isOpen ? 90 : 0))
+                    .foregroundStyle(Pastel.ink.opacity(0.7))
+                    .frame(width: 22, height: 22)
+                    .background(Circle().fill(Pastel.fill))
             }
-            .padding(.horizontal, 12).padding(.vertical, 8)
-            .background(RoundedRectangle(cornerRadius: 10).fill(Pastel.lavender.opacity(0.45)))
+            .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 6)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.top, 2)
     }
 
     private func groupHeader(_ c: NewsCategory, count: Int) -> some View {
         HStack(spacing: 5) {
-            Image(systemName: c.symbol).font(.system(size: 10))
-            Text(c.name(lang)).font(.system(size: 11, weight: .semibold, design: .rounded))
-            Text("\(count)").font(.system(size: 10)).foregroundStyle(Pastel.subInk.opacity(0.8))
+            Image(systemName: c.symbol).font(.system(size: 10, weight: .medium))
+            Text(c.name(lang)).font(.system(size: 11.5, weight: .semibold))
+            Text("\(count)").font(.system(size: 11))
         }
         .foregroundStyle(Pastel.subInk)
-        .padding(.leading, 6).padding(.top, 2)
+        .padding(.horizontal, 6).padding(.vertical, 3)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Pastel.fill))
+        .padding(.horizontal, 16).padding(.top, 6).padding(.bottom, 2)
     }
 
     private func dayTitle(_ d: Date) -> String {
@@ -391,8 +441,10 @@ struct EmptyState: View {
     }
 }
 
-// MARK: - Card
+// MARK: - Feed row
 
+/// One story in the feed: avatar + source + time, headline, key points, and an action row.
+/// Featured (Big news) stories sit in a pastel banner; the rest are flat rows split by hairlines.
 struct ArticleCard: View {
     @EnvironmentObject var store: NewsStore
     let article: Article
@@ -403,94 +455,173 @@ struct ArticleCard: View {
     var body: some View {
         let unread = !store.readLinks.contains(article.link)
         let tint = article.source?.tint ?? Pastel.butter
-        let big = store.isBig(article)
         let selected = store.selectedLink == article.link
-        let saved = store.isBookmarked(article)
+        let lang = store.language
 
-        Button { withAnimation(.easeInOut(duration: 0.18)) { store.open(article) } } label: {
-            HStack(alignment: .top, spacing: 10) {
-                RoundedRectangle(cornerRadius: 2).fill(tint).frame(width: 4)
-
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
+            // Byline
+            HStack(spacing: 9) {
+                SourceAvatar(source: article.source, size: 30)
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 4) {
                         Text(article.source?.name ?? "")
-                            .font(.system(size: 10, weight: .semibold, design: .rounded))
-                            .foregroundStyle(Pastel.ink.opacity(0.75))
-                            .padding(.horizontal, 7).padding(.vertical, 2)
-                            .background(Capsule().fill(tint.opacity(0.7)))
+                            .font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Pastel.ink)
                         if article.source?.official == true {
-                            Label(store.language.t(.official), systemImage: "checkmark.seal.fill")
-                                .labelStyle(.titleAndIcon)
-                                .font(.system(size: 9.5, weight: .medium, design: .rounded))
-                                .foregroundStyle(Pastel.ink.opacity(0.6))
+                            Image(systemName: "checkmark.seal.fill").font(.system(size: 10))
+                                .foregroundStyle(Pastel.accent)
+                                .help(lang.t(.official))
                         }
-                        if big && !featured {
+                        if store.isBig(article) && !featured {
                             Image(systemName: "star.fill").font(.system(size: 9)).foregroundStyle(Pastel.gold)
                         }
-                        if showCategory {
-                            Text(store.category(article).name(store.language))
-                                .font(.system(size: 10, design: .rounded)).foregroundStyle(Pastel.subInk)
-                        }
-                        Spacer()
-                        if saved {
-                            Image(systemName: "bookmark.fill").font(.system(size: 9.5))
-                                .foregroundStyle(Color(red: 0.55, green: 0.48, blue: 0.85))
-                        }
+                    }
+                    HStack(spacing: 4) {
                         Text(article.date, format: .relative(presentation: .named))
-                            .font(.system(size: 10)).foregroundStyle(Pastel.subInk)
-                        if unread {
-                            Circle().fill(Color(red: 0.62, green: 0.55, blue: 0.92)).frame(width: 6, height: 6)
+                        if showCategory {
+                            Text("·")
+                            Text(store.category(article).name(lang))
                         }
                     }
+                    .font(.system(size: 11)).foregroundStyle(Pastel.subInk)
+                }
+                Spacer()
+                if unread { Circle().fill(Pastel.accent).frame(width: 7, height: 7) }
+                moreMenu
+            }
 
+            // Headline + key points (the tappable part)
+            Button { withAnimation(.easeInOut(duration: 0.18)) { store.open(article) } } label: {
+                VStack(alignment: .leading, spacing: 6) {
                     Text(store.title(article))
-                        .font(.system(size: featured ? 14 : 13, weight: unread || featured ? .semibold : .medium))
-                        .foregroundStyle(Pastel.ink.opacity(unread ? 1 : 0.7))
+                        .font(.system(size: featured ? 15 : 14, weight: .semibold))
+                        .foregroundStyle(Pastel.ink.opacity(unread ? 1 : 0.6))
+                        .lineSpacing(2)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
-
                     let points = store.bullets(article)
                     if !points.isEmpty {
-                        BulletList(points: points, dot: tint, size: 11.5, color: Pastel.subInk)
-                            .padding(.top, 1)
+                        BulletList(points: points, dot: tint, size: 12.5, color: Pastel.body.opacity(unread ? 1 : 0.75))
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(featured
-                          ? AnyShapeStyle(LinearGradient(colors: [.white, Pastel.butter.opacity(0.55)],
-                                                         startPoint: .topLeading, endPoint: .bottomTrailing))
-                          : AnyShapeStyle(Color.white.opacity(hovering ? 1 : 0.88)))
-                    .shadow(color: (featured ? Pastel.gold : Pastel.lavender).opacity(hovering ? 0.7 : 0.35),
-                            radius: hovering ? 6 : 3, y: 1)
-            )
-            .overlay(RoundedRectangle(cornerRadius: 12)
-                .stroke(featured ? Pastel.gold.opacity(0.7) : tint.opacity(0.6), lineWidth: featured ? 1 : 0.6))
-            .overlay(RoundedRectangle(cornerRadius: 12)
-                .stroke(Color(red: 0.62, green: 0.55, blue: 0.92), lineWidth: selected ? 2 : 0))
+            .buttonStyle(.plain)
+
+            actions
         }
-        .id(article.link)
-        .buttonStyle(.plain)
+        .padding(.horizontal, featured ? 14 : 16)
+        .padding(.vertical, featured ? 12 : 13)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(background(selected: selected, tint: tint))
+        .overlay(alignment: .bottom) {
+            if !featured { Rectangle().fill(Pastel.divider).frame(height: 1).padding(.horizontal, 16) }
+        }
         .onHover { hovering = $0 }
-        .contextMenu {
-            let ko = store.language == .ko
-            if ko {
-                Button("앱에서 한국어로 읽기") { withAnimation { store.open(article) } }
-                Button("웹 번역으로 열기") { store.openWebTranslation(article) }
-            }
-            Button(ko ? "원문을 브라우저에서 열기" : "Open in Browser") { store.openInBrowser(article) }
-            Button(ko ? "링크 복사" : "Copy Link") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(article.link, forType: .string)
-            }
-            Button(store.isBookmarked(article) ? store.language.t(.unbookmark) : store.language.t(.bookmark)) {
+        .id(article.link)
+        .contextMenu { menuItems }
+    }
+
+    @ViewBuilder private func background(selected: Bool, tint: Color) -> some View {
+        if featured {
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Pastel.butter.opacity(hovering ? 0.85 : 0.6))
+                .overlay(RoundedRectangle(cornerRadius: 10)
+                    .stroke(Pastel.accent, lineWidth: selected ? 1.5 : 0))
+        } else {
+            Rectangle().fill(selected ? Pastel.lavender.opacity(0.35) : hovering ? Pastel.fill.opacity(0.7) : .white)
+        }
+    }
+
+    /// 저장 · 원문 — like the 좋아요 / 댓글 row of a feed.
+    private var actions: some View {
+        let lang = store.language
+        let saved = store.isBookmarked(article)
+        return HStack(spacing: 16) {
+            ActionButton(symbol: saved ? "bookmark.fill" : "bookmark",
+                         label: saved ? lang.t(.saved) : lang.t(.bookmark),
+                         tint: saved ? Pastel.accent : Pastel.ink.opacity(0.75)) {
                 store.toggleBookmark(article)
             }
-            Button(ko ? "읽음으로 표시" : "Mark as Read") { store.markRead(article) }
+            ActionButton(symbol: "arrow.up.right.square", label: lang.t(.openOriginal),
+                         tint: Pastel.ink.opacity(0.75)) {
+                store.openInBrowser(article)
+            }
+            if lang == .ko {
+                ActionButton(symbol: "text.book.closed", label: "한국어로 읽기", tint: Pastel.ink.opacity(0.75)) {
+                    withAnimation(.easeInOut(duration: 0.18)) { store.open(article) }
+                }
+            }
+            Spacer()
         }
+        .padding(.top, 1)
+    }
+
+    private var moreMenu: some View {
+        Menu { menuItems } label: {
+            Image(systemName: "ellipsis").font(.system(size: 13, weight: .bold))
+                .foregroundStyle(Pastel.ink.opacity(0.7))
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+
+    @ViewBuilder private var menuItems: some View {
+        let ko = store.language == .ko
+        if ko {
+            Button("앱에서 한국어로 읽기") { withAnimation { store.open(article) } }
+            Button("웹 번역으로 열기") { store.openWebTranslation(article) }
+        }
+        Button(ko ? "원문을 브라우저에서 열기" : "Open in Browser") { store.openInBrowser(article) }
+        Button(ko ? "링크 복사" : "Copy Link") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(article.link, forType: .string)
+        }
+        Button(store.isBookmarked(article) ? store.language.t(.unbookmark) : store.language.t(.bookmark)) {
+            store.toggleBookmark(article)
+        }
+        Button(ko ? "읽음으로 표시" : "Mark as Read") { store.markRead(article) }
+    }
+}
+
+/// Round pastel avatar with the source's initials (stands in for a profile photo).
+struct SourceAvatar: View {
+    let source: FeedSource?
+    var size: CGFloat = 30
+
+    var body: some View {
+        let tint = source?.tint ?? Pastel.butter
+        let initials = source?.initials ?? "?"
+        Text(initials)
+            .font(.system(size: size * (initials.count > 2 ? 0.3 : 0.37), weight: .bold))
+            .foregroundStyle(tint.mix(with: Pastel.ink, by: 0.62))
+            .frame(width: size, height: size)
+            .background(Circle().fill(tint))
+            .overlay(Circle().stroke(Color.black.opacity(0.04), lineWidth: 1))
+    }
+}
+
+struct ActionButton: View {
+    let symbol: String
+    let label: String
+    var tint: Color = Pastel.ink.opacity(0.75)
+    let action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: symbol).font(.system(size: 12, weight: .medium))
+                Text(label).font(.system(size: 11.5, weight: .medium))
+            }
+            .foregroundStyle(hover ? Pastel.ink : tint)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
     }
 }
 
@@ -554,16 +685,17 @@ struct ArticleReader: View {
                 VStack(alignment: .leading, spacing: 14) {
                     meta
                     Text(store.title(article))
-                        .font(.system(size: 17, weight: .bold))
+                        .font(.system(size: 19, weight: .bold))
                         .foregroundStyle(Pastel.ink)
                         .lineSpacing(3)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .fixedSize(horizontal: false, vertical: true)
                     keyPoints
                     bodySection
                 }
                 .textSelection(.enabled)
                 .padding(.horizontal, 20)
-                .padding(.top, 6)
+                .padding(.top, 12)
                 .padding(.bottom, 20)
             }
             bottomBar
@@ -603,52 +735,51 @@ struct ArticleReader: View {
     // MARK: Pieces
 
     private var topBar: some View {
-        HStack {
+        HStack(spacing: 4) {
             Button {
                 withAnimation(.easeInOut(duration: 0.18)) { store.reading = nil }
             } label: {
-                Label(lang.t(.back), systemImage: "chevron.left")
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(Pastel.ink.opacity(0.75))
-                    .padding(.horizontal, 10).padding(.vertical, 5)
-                    .background(Capsule().fill(Color.white.opacity(0.8)))
-                    .contentShape(Capsule())
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.left").font(.system(size: 12, weight: .semibold))
+                    Text(lang.t(.back)).font(.system(size: 13, weight: .semibold))
+                }
+                .foregroundStyle(Pastel.ink)
+                .padding(.horizontal, 6).frame(height: 28)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             Spacer()
             let saved = store.isBookmarked(article)
-            Button { store.toggleBookmark(article) } label: {
-                Label(saved ? lang.t(.unbookmark) : lang.t(.bookmark), systemImage: saved ? "bookmark.fill" : "bookmark")
-                    .font(.system(size: 11.5, weight: .medium, design: .rounded))
-                    .foregroundStyle(Pastel.ink.opacity(0.75))
-                    .padding(.horizontal, 10).padding(.vertical, 5)
-                    .background(Capsule().fill(saved ? Pastel.lavender : Color.white.opacity(0.8)))
-                    .contentShape(Capsule())
+            IconButton(system: saved ? "bookmark.fill" : "bookmark") { store.toggleBookmark(article) }
+                .help(lang == .ko ? "저장 (B) · ←/→ 이전·다음 기사" : "Save (B) · ←/→ previous/next story")
+            IconButton(system: "square.and.arrow.up") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString("\(store.title(article))\n\(article.link)", forType: .string)
             }
-            .buttonStyle(.plain)
-            .help(lang == .ko ? "저장 (B) · ←/→ 이전·다음 기사" : "Save (B) · ←/→ previous/next story")
+            .help(lang == .ko ? "제목과 링크 복사" : "Copy title and link")
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 10)
         .padding(.bottom, 6)
+        .overlay(alignment: .bottom) { Rectangle().fill(Pastel.divider).frame(height: 1) }
     }
 
     private var meta: some View {
-        HStack(spacing: 6) {
-            Text(article.source?.name ?? "")
-                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
-                .foregroundStyle(Pastel.ink.opacity(0.75))
-                .padding(.horizontal, 8).padding(.vertical, 2)
-                .background(Capsule().fill(tint.opacity(0.75)))
-            if article.source?.official == true {
-                Label(lang.t(.official), systemImage: "checkmark.seal.fill")
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundStyle(Pastel.ink.opacity(0.6))
+        HStack(spacing: 9) {
+            SourceAvatar(source: article.source, size: 32)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
+                    Text(article.source?.name ?? "").font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Pastel.ink)
+                    if article.source?.official == true {
+                        Image(systemName: "checkmark.seal.fill").font(.system(size: 10.5))
+                            .foregroundStyle(Pastel.accent)
+                    }
+                }
+                Text(article.date.formatted(.dateTime.month(.abbreviated).day().hour().minute().locale(lang.locale))
+                     + " · " + store.category(article).name(lang))
+                    .font(.system(size: 11)).foregroundStyle(Pastel.subInk)
             }
-            Text(store.category(article).name(lang))
-                .font(.system(size: 10.5, design: .rounded)).foregroundStyle(Pastel.subInk)
             Spacer()
-            Text(article.date.formatted(.dateTime.month(.abbreviated).day().hour().minute().locale(lang.locale)))
-                .font(.system(size: 10.5)).foregroundStyle(Pastel.subInk)
         }
     }
 
@@ -656,26 +787,25 @@ struct ArticleReader: View {
         let points = store.bullets(article)
         if !points.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
-                Label(lang.t(.keyPoints), systemImage: "list.bullet")
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Pastel.ink.opacity(0.7))
-                BulletList(points: points, dot: tint, size: 12.5, color: Pastel.ink.opacity(0.85), spacing: 6)
+                Text(lang.t(.keyPoints))
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Pastel.ink)
+                BulletList(points: points, dot: tint, size: 13, color: Pastel.body, spacing: 6)
             }
-            .padding(12)
+            .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 10).fill(tint.opacity(0.28)))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(tint.opacity(0.8), lineWidth: 0.6))
+            .background(RoundedRectangle(cornerRadius: 10).fill(tint.opacity(0.4)))
         }
     }
 
     @ViewBuilder private var bodySection: some View {
         HStack(spacing: 8) {
             Text(lang.t(.fullArticle))
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .foregroundStyle(Pastel.subInk)
-            Rectangle().fill(Pastel.lavender).frame(height: 0.8)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(Pastel.ink)
+            Rectangle().fill(Pastel.divider).frame(height: 1)
         }
-        .padding(.top, 4)
+        .padding(.top, 6)
 
         if lang == .ko && store.translationReady == false {
             LanguagePackBanner()
@@ -700,15 +830,15 @@ struct ArticleReader: View {
         switch b.kind {
         case .heading:
             Text(b.text)
-                .font(.system(size: 14.5, weight: .semibold))
+                .font(.system(size: 15, weight: .bold))
                 .foregroundStyle(Pastel.ink)
                 .padding(.top, 6)
                 .fixedSize(horizontal: false, vertical: true)
         case .paragraph:
             Text(b.text)
-                .font(.system(size: 13.5))
-                .foregroundStyle(Pastel.ink.opacity(0.9))
-                .lineSpacing(5)
+                .font(.system(size: 14))
+                .foregroundStyle(Pastel.ink.opacity(0.88))
+                .lineSpacing(6)
                 .fixedSize(horizontal: false, vertical: true)
         case .bullet:
             BulletList(points: [b.text], dot: tint, size: 13.5, color: Pastel.ink.opacity(0.9))
@@ -739,16 +869,16 @@ struct ArticleReader: View {
                 Button { store.openWebTranslation(article) } label: {
                     Label(lang.t(.openTranslatedWeb), systemImage: "globe")
                 }
-                .buttonStyle(PastelButton(fill: failed ? Pastel.mint : Pastel.lavender))
+                .buttonStyle(PastelButton(fill: failed ? Pastel.mint : nil))
             }
             Spacer()
             Button { store.openInBrowser(article) } label: {
                 Label(lang.t(.openOriginal), systemImage: "arrow.up.right.square")
             }
-            .buttonStyle(PastelButton(fill: Pastel.sky))
+            .buttonStyle(PastelButton(fill: Pastel.lavender))
         }
-        .padding(.horizontal, 16).padding(.vertical, 9)
-        .background(Color.white.opacity(0.85))
+        .padding(.horizontal, 16).padding(.vertical, 10)
+        .overlay(alignment: .top) { Rectangle().fill(Pastel.divider).frame(height: 1) }
     }
 }
 
@@ -761,7 +891,7 @@ struct LanguagePackBanner: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("한국어 번역 언어팩이 필요해요", systemImage: "character.bubble")
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(Pastel.ink)
             Text("제목·요약·기사 본문을 Mac에서 바로 번역하려면 영어→한국어 언어팩(무료)을 한 번 내려받아야 해요.")
                 .font(.system(size: 11)).foregroundStyle(Pastel.subInk)
@@ -770,7 +900,7 @@ struct LanguagePackBanner: View {
                 Button("언어팩 다운로드") { store.downloadKoreanPack() }
                     .buttonStyle(PastelButton(fill: Pastel.mint))
                 Button("시스템 설정에서 받기") { store.openTranslationSettings() }
-                    .buttonStyle(PastelButton(fill: Pastel.lavender))
+                    .buttonStyle(PastelButton(fill: nil))
             }
             Text("시스템 설정 → 일반 → 언어 및 지역 → 번역 언어에서 ‘한국어’를 받아도 돼요.")
                 .font(.system(size: 10)).foregroundStyle(Pastel.subInk)
@@ -778,8 +908,7 @@ struct LanguagePackBanner: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Pastel.butter.opacity(0.8)))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Pastel.gold.opacity(0.6), lineWidth: 0.6))
+        .background(RoundedRectangle(cornerRadius: 10).fill(Pastel.butter.opacity(0.75)))
         .padding(.horizontal, 12)
         .padding(.bottom, 8)
     }
@@ -857,7 +986,7 @@ struct SettingsView: View {
     var body: some View {
         ScrollView {
         VStack(alignment: .leading, spacing: 14) {
-            Text(lang.t(.settingsAI)).font(.system(size: 13, weight: .semibold, design: .rounded))
+            Text(lang.t(.settingsAI)).font(.system(size: 14, weight: .bold))
                 .foregroundStyle(Pastel.ink)
             Text(lang.t(.settingsAIBody))
                 .font(.system(size: 11.5)).foregroundStyle(Pastel.subInk)
@@ -867,13 +996,12 @@ struct SettingsView: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 12, design: .monospaced))
                 .padding(9)
-                .background(RoundedRectangle(cornerRadius: 8).fill(.white))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Pastel.lavender, lineWidth: 1))
+                .background(RoundedRectangle(cornerRadius: 8).fill(Pastel.fill))
 
             HStack {
                 if store.hasAPIKey {
                     Button(lang.t(.removeKey)) { store.setAPIKey(""); key = "" }
-                        .buttonStyle(PastelButton(fill: Pastel.rose))
+                        .buttonStyle(PastelButton(fill: nil))
                 }
                 Spacer()
                 Button(lang.t(.save)) {
@@ -883,10 +1011,10 @@ struct SettingsView: View {
                 .disabled(key.trimmingCharacters(in: .whitespaces).isEmpty)
             }
 
-            Divider().padding(.vertical, 4)
+            Rectangle().fill(Pastel.divider).frame(height: 1).padding(.vertical, 4)
 
             Toggle(isOn: Binding(get: { store.launchAtLogin }, set: { store.setLaunchAtLogin($0) })) {
-                Text(lang.t(.launchAtLogin)).font(.system(size: 12.5, weight: .medium, design: .rounded))
+                Text(lang.t(.launchAtLogin)).font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(Pastel.ink)
             }
             .toggleStyle(.switch)
@@ -895,7 +1023,7 @@ struct SettingsView: View {
 
             Toggle(isOn: Binding(get: { store.notifyBigNews }, set: { store.setNotifyBigNews($0) })) {
                 Label(lang.t(.notifyBig), systemImage: "bell.badge")
-                    .font(.system(size: 12.5, weight: .medium, design: .rounded))
+                    .font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(Pastel.ink)
             }
             .toggleStyle(.switch)
@@ -904,22 +1032,22 @@ struct SettingsView: View {
 
             Toggle(isOn: Binding(get: { store.notifyBriefing }, set: { store.setNotifyBriefing($0) })) {
                 Label(lang.t(.notifyBriefing), systemImage: "sun.horizon")
-                    .font(.system(size: 12.5, weight: .medium, design: .rounded))
+                    .font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(Pastel.ink)
             }
             .toggleStyle(.switch)
             .controlSize(.small)
             .tint(Pastel.mint)
 
-            Divider().padding(.vertical, 4)
+            Rectangle().fill(Pastel.divider).frame(height: 1).padding(.vertical, 4)
 
-            Text(lang.t(.shortcuts)).font(.system(size: 13, weight: .semibold, design: .rounded))
+            Text(lang.t(.shortcuts)).font(.system(size: 14, weight: .bold))
                 .foregroundStyle(Pastel.ink)
             ShortcutsTable()
 
-            Divider().padding(.vertical, 4)
+            Rectangle().fill(Pastel.divider).frame(height: 1).padding(.vertical, 4)
 
-            Text(lang.t(.sources)).font(.system(size: 13, weight: .semibold, design: .rounded))
+            Text(lang.t(.sources)).font(.system(size: 14, weight: .bold))
                 .foregroundStyle(Pastel.ink)
             ForEach([true, false], id: \.self) { official in
                 Text(official ? lang.t(.official) : lang.t(.outlets))
@@ -960,26 +1088,68 @@ struct IconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: system)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Pastel.ink.opacity(0.7))
+                .font(.system(size: 13.5, weight: .medium))
+                .foregroundStyle(Pastel.ink.opacity(0.85))
                 .rotationEffect(.degrees(spinning ? 360 : 0))
                 .animation(spinning ? .linear(duration: 1).repeatForever(autoreverses: false) : .default,
                            value: spinning)
                 .frame(width: 28, height: 28)
-                .background(Circle().fill(hover ? Pastel.lavender.opacity(0.6) : Color.white.opacity(0.7)))
+                .background(RoundedRectangle(cornerRadius: 7).fill(hover ? Pastel.fill : .clear))
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hover = $0 }
     }
 }
 
+/// Filled pastel button (primary) — or outlined white when `fill` is nil (secondary).
 struct PastelButton: ButtonStyle {
-    let fill: Color
+    var fill: Color? = Pastel.mint
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 12, weight: .medium, design: .rounded))
+            .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(Pastel.ink)
-            .padding(.horizontal, 14).padding(.vertical, 6)
-            .background(Capsule().fill(fill.opacity(configuration.isPressed ? 1 : 0.8)))
+            .padding(.horizontal, 12)
+            .frame(height: 30)
+            .background(RoundedRectangle(cornerRadius: 8)
+                .fill(fill.map { $0.opacity(configuration.isPressed ? 1 : 0.85) } ?? (configuration.isPressed ? Pastel.fill : .white)))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(fill == nil ? Pastel.line : .clear, lineWidth: 1))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+// MARK: - Debug snapshot
+
+@MainActor
+enum Snapshot {
+    /// Popover height; only the debug snapshot changes it.
+    nonisolated(unsafe) static var height: CGFloat = 600
+
+    static func schedule(path: String, ko: Bool, reader: Bool, height: CGFloat) {
+        self.height = height
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1))
+            guard let store = NewsStore.shared else { return }
+            let savedLanguage = UserDefaults.standard.string(forKey: "language")
+            store.language = ko ? .ko : .en
+            while store.isLoading || store.articles.isEmpty { try? await Task.sleep(for: .milliseconds(300)) }
+            if reader { store.reading = store.bigNews(.all).first ?? store.today(.all).first }
+            let view = ContentView().environmentObject(store)
+                .environment(\.colorScheme, .light).environment(\.locale, store.language.locale)
+            let host = NSHostingView(rootView: view)
+            host.frame = NSRect(x: 0, y: 0, width: 400, height: height)
+            let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            window.contentView = host
+            window.setFrameOrigin(NSPoint(x: -5000, y: -5000))
+            window.orderFrontRegardless()
+            try? await Task.sleep(for: .seconds(reader ? 6 : 2))
+            host.layoutSubtreeIfNeeded()
+            if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+                host.cacheDisplay(in: host.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+            }
+            UserDefaults.standard.set(savedLanguage, forKey: "language")   // don't change the user's setting
+            exit(0)
+        }
     }
 }
