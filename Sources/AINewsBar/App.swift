@@ -25,39 +25,34 @@ enum Tab { case today, past, saved }
 
 struct ContentView: View {
     @EnvironmentObject var store: NewsStore
-    @State private var tab: Tab = .today
-    @State private var category: NewsCategory = .all
-    @State private var showSettings = false
+    @StateObject private var ui = UIModel()
     @State private var translationConfig: TranslationSession.Configuration?
-    @State private var searching = false
-    @State private var query = ""
-    @FocusState private var searchFocused: Bool
-    @FocusState private var rootFocused: Bool
 
     private var lang: AppLanguage { store.language }
-    private var queryActive: Bool { searching && !query.trimmingCharacters(in: .whitespaces).isEmpty }
 
     var body: some View {
         VStack(spacing: 0) {
             header
-            if showSettings {
-                SettingsView(isPresented: $showSettings)
+            if ui.showSettings {
+                SettingsView(isPresented: $ui.showSettings)
             } else if let article = store.reading {
                 ArticleReader(article: article)
                     .id(article.link)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             } else {
-                if searching { searchBar } else { tabs }
+                if ui.searching {
+                    SearchBar(ui: ui, placeholder: lang.t(.searchPlaceholder), closeLabel: lang == .ko ? "닫기" : "Close")
+                } else { tabs }
                 chips
                 if lang == .ko && store.translationReady == false { LanguagePackBanner() }
                 Group {
-                    if searching {
-                        SearchList(query: query, category: category)
+                    if ui.searching {
+                        SearchList(query: ui.query, category: ui.category)
                     } else {
-                        switch tab {
-                        case .today: TodayList(category: category)
-                        case .past: PastList(category: category)
-                        case .saved: SavedList(category: category)
+                        switch ui.tab {
+                        case .today: TodayList(category: ui.category)
+                        case .past: PastList(category: ui.category)
+                        case .saved: SavedList(category: ui.category)
                         }
                     }
                 }
@@ -66,14 +61,6 @@ struct ContentView: View {
             }
         }
         .frame(width: 400, height: 600)
-        // Keyboard navigation: the whole popover takes key presses.
-        .focusable()
-        .focused($rootFocused)
-        .focusEffectDisabled()
-        .onKeyPress(phases: .down, action: handleKey)
-        .onChange(of: tab) { store.selectedLink = nil }
-        .onChange(of: category) { store.selectedLink = nil }
-        .onChange(of: query) { store.selectedLink = nil }
         .background(
             LinearGradient(colors: [.white, Pastel.lavender.opacity(0.35), Pastel.mint.opacity(0.30)],
                            startPoint: .top, endPoint: .bottom)
@@ -83,7 +70,7 @@ struct ContentView: View {
             await store.translatePending(using: session)
         }
         .onAppear {
-            rootFocused = true
+            ui.attach(store)   // keyboard shortcuts
             requestTranslation()
             // Pick up a pack the user installed from System Settings since we last checked.
             if store.translationReady != true { Task { await store.checkTranslationAvailability() } }
@@ -126,15 +113,15 @@ struct ContentView: View {
             }
             Spacer()
             LanguageToggle()
-            IconButton(system: searching ? "magnifyingglass.circle.fill" : "magnifyingglass") {
-                searching ? closeSearch() : openSearch()
+            IconButton(system: ui.searching ? "magnifyingglass.circle.fill" : "magnifyingglass") {
+                ui.searching ? ui.closeSearch() : ui.openSearch()
             }
             .help(lang == .ko ? "검색 (⌘F)" : "Search (⌘F)")
             IconButton(system: "arrow.clockwise", spinning: store.isLoading) {
                 Task { await store.refresh() }
             }
-            IconButton(system: showSettings ? "xmark" : "gearshape") {
-                withAnimation(.easeInOut(duration: 0.15)) { showSettings.toggle() }
+            IconButton(system: ui.showSettings ? "xmark" : "gearshape") {
+                withAnimation(.easeInOut(duration: 0.15)) { ui.showSettings.toggle() }
             }
         }
         .onChange(of: store.language) {
@@ -155,148 +142,13 @@ struct ContentView: View {
         return "\(lang.t(.updated)) \(time)" + (unread > 0 ? " · \(unread) \(lang.t(.new))" : "")
     }
 
-    // MARK: Search
-
-    private var searchBar: some View {
-        HStack(spacing: 7) {
-            Image(systemName: "magnifyingglass").font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(Pastel.subInk)
-            TextField(lang.t(.searchPlaceholder), text: $query)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12.5))
-                .foregroundStyle(Pastel.ink)
-                .focused($searchFocused)
-                .onSubmit { openSelectedOrFirst() }
-            if queryActive {
-                Text("\(navigable.count)\(lang == .ko ? "" : " ")\(lang.t(.results))")
-                    .font(.system(size: 10.5, design: .rounded)).foregroundStyle(Pastel.subInk)
-            }
-            Button(action: closeSearch) {
-                Image(systemName: "xmark.circle.fill").font(.system(size: 12)).foregroundStyle(Pastel.subInk)
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 11).padding(.vertical, 7)
-        .background(Capsule().fill(Color.white.opacity(0.9)))
-        .overlay(Capsule().stroke(Pastel.lavender.opacity(0.9), lineWidth: 0.8))
-        .padding(.horizontal, 16)
-        .padding(.bottom, 8)
-    }
-
-    private func openSearch() {
-        withAnimation(.easeInOut(duration: 0.15)) {
-            showSettings = false
-            store.reading = nil
-            searching = true
-        }
-        DispatchQueue.main.async { searchFocused = true }
-    }
-
-    private func closeSearch() {
-        withAnimation(.easeInOut(duration: 0.15)) { searching = false; query = "" }
-        searchFocused = false
-        rootFocused = true
-    }
-
-    // MARK: Keyboard
-
-    /// Stories in on-screen order, for ↑/↓ navigation.
-    private var navigable: [Article] {
-        if searching { return queryActive ? store.search(query, category: category) : [] }
-        switch tab {
-        case .today: return store.bigNews(category) + store.today(category)
-        case .past: return store.pastDays(category).flatMap { $0.groups.flatMap(\.articles) }
-        case .saved: return store.saved(category)
-        }
-    }
-
-    private func move(_ step: Int) {
-        let list = navigable
-        guard !list.isEmpty else { return }
-        let current = list.firstIndex { $0.link == store.selectedLink }
-        let next = current.map { min(max($0 + step, 0), list.count - 1) } ?? (step > 0 ? 0 : list.count - 1)
-        store.selectedLink = list[next].link
-    }
-
-    private var selectedArticle: Article? {
-        guard let link = store.selectedLink else { return nil }
-        return navigable.first { $0.link == link }
-    }
-
-    private func openSelectedOrFirst() {
-        guard let a = selectedArticle ?? navigable.first else { return }
-        store.selectedLink = a.link
-        searchFocused = false
-        rootFocused = true
-        withAnimation(.easeInOut(duration: 0.18)) { store.open(a) }
-    }
-
-    private func handleKey(_ press: KeyPress) -> KeyPress.Result {
-        if press.modifiers.contains(.command) {
-            if press.characters == "f" { openSearch(); return .handled }
-            return .ignored
-        }
-        if press.key == .escape {
-            if store.reading != nil { withAnimation(.easeInOut(duration: 0.18)) { store.reading = nil }; return .handled }
-            if showSettings { withAnimation { showSettings = false }; return .handled }
-            if searching { if query.isEmpty { closeSearch() } else { query = "" }; return .handled }
-            return .ignored
-        }
-        // While typing a search, only ↓ / ↵ leave the field; everything else is text.
-        if searchFocused {
-            if press.key == .downArrow {
-                searchFocused = false; rootFocused = true
-                if let first = navigable.first { store.selectedLink = first.link }
-                return .handled
-            }
-            return .ignored
-        }
-        if showSettings { return .ignored }
-
-        if let reading = store.reading {
-            switch press.key {
-            case .leftArrow, .rightArrow:
-                let list = navigable
-                guard let i = list.firstIndex(where: { $0.link == reading.link }) else { return .ignored }
-                let j = i + (press.key == .rightArrow ? 1 : -1)
-                guard list.indices.contains(j) else { return .handled }
-                store.selectedLink = list[j].link
-                store.open(list[j])
-                return .handled
-            default:
-                switch press.characters {
-                case "b": store.toggleBookmark(reading); return .handled
-                case "o": store.openInBrowser(reading); return .handled
-                default: return .ignored
-                }
-            }
-        }
-
-        switch press.key {
-        case .downArrow: move(1); return .handled
-        case .upArrow: move(-1); return .handled
-        case .return, .space: openSelectedOrFirst(); return .handled
-        default: break
-        }
-        switch press.characters {
-        case "j": move(1)
-        case "k": move(-1)
-        case "/": openSearch()
-        case "r": Task { await store.refresh() }
-        case "b": if let a = selectedArticle { store.toggleBookmark(a) } else { return .ignored }
-        case "o": if let a = selectedArticle { store.openInBrowser(a) } else { return .ignored }
-        default: return .ignored
-        }
-        return .handled
-    }
-
     // MARK: Tabs & chips
 
     private var tabs: some View {
         HStack(spacing: 4) {
-            tabButton(.today, lang.t(.today), "sun.max").keyboardShortcut("1", modifiers: .command)
-            tabButton(.past, lang.t(.past), "calendar").keyboardShortcut("2", modifiers: .command)
-            tabButton(.saved, lang.t(.saved), "bookmark").keyboardShortcut("3", modifiers: .command)
+            tabButton(.today, lang.t(.today), "sun.max")
+            tabButton(.past, lang.t(.past), "calendar")
+            tabButton(.saved, lang.t(.saved), "bookmark")
         }
         .padding(3)
         .background(Capsule().fill(Color.white.opacity(0.75)))
@@ -306,13 +158,13 @@ struct ContentView: View {
     }
 
     private func tabButton(_ t: Tab, _ label: String, _ symbol: String) -> some View {
-        Button { withAnimation(.easeInOut(duration: 0.15)) { tab = t } } label: {
+        Button { withAnimation(.easeInOut(duration: 0.15)) { ui.tab = t } } label: {
             Label(label, systemImage: symbol)
-                .font(.system(size: 12, weight: tab == t ? .semibold : .regular, design: .rounded))
-                .foregroundStyle(Pastel.ink.opacity(tab == t ? 1 : 0.6))
+                .font(.system(size: 12, weight: ui.tab == t ? .semibold : .regular, design: .rounded))
+                .foregroundStyle(Pastel.ink.opacity(ui.tab == t ? 1 : 0.6))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 5)
-                .background(Capsule().fill(tab == t ? Pastel.lavender : .clear))
+                .background(Capsule().fill(ui.tab == t ? Pastel.lavender : .clear))
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -322,12 +174,12 @@ struct ContentView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 ForEach(NewsCategory.allCases) { c in
-                    Button { category = c } label: {
+                    Button { ui.category = c } label: {
                         Text(c.name(lang))
-                            .font(.system(size: 11.5, weight: category == c ? .semibold : .regular, design: .rounded))
-                            .foregroundStyle(Pastel.ink.opacity(category == c ? 1 : 0.7))
+                            .font(.system(size: 11.5, weight: ui.category == c ? .semibold : .regular, design: .rounded))
+                            .foregroundStyle(Pastel.ink.opacity(ui.category == c ? 1 : 0.7))
                             .padding(.horizontal, 11).padding(.vertical, 5)
-                            .background(Capsule().fill(category == c ? Pastel.mint : Color.white.opacity(0.8)))
+                            .background(Capsule().fill(ui.category == c ? Pastel.mint : Color.white.opacity(0.8)))
                             .overlay(Capsule().stroke(Pastel.mint.opacity(0.9), lineWidth: 0.6))
                     }
                     .buttonStyle(.plain)

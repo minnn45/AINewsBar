@@ -36,6 +36,9 @@ struct SearchList: View {
         } else {
             SelectionScroll {
                 LazyVStack(alignment: .leading, spacing: 8) {
+                    Text(lang == .ko ? "검색 결과 \(results.count)건 · ↑↓ 이동 · ↵ 열기" : "\(results.count) results · ↑↓ move · ↵ open")
+                        .font(.system(size: 10.5, design: .rounded)).foregroundStyle(Pastel.subInk)
+                        .padding(.leading, 4)
                     ForEach(results) { ArticleCard(article: $0, showCategory: true) }
                 }
                 .padding(.horizontal, 12)

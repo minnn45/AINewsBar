@@ -19,9 +19,9 @@ final class NewsStore: ObservableObject {
 
     @Published private(set) var notifyBigNews = UserDefaults.standard.object(forKey: "notifyBigNews") as? Bool ?? true
     /// Every article seen in the last `archiveDays` days (persisted), newest first.
-    @Published private(set) var articles: [Article] = []
-    @Published private(set) var summaries: [String: SummaryInfo] = [:]
-    @Published private(set) var translations: [String: String] = [:]   // English text → Korean
+    @Published private(set) var articles: [Article] = [] { didSet { invalidateDerived() } }
+    @Published private(set) var summaries: [String: SummaryInfo] = [:] { didSet { invalidateDerived() } }
+    @Published private(set) var translations: [String: String] = [:] { didSet { searchIndex.removeAll() } }  // English → Korean
     @Published private(set) var isLoading = false
     @Published private(set) var isTranslating = false
     /// Whether the on-device English→Korean pack is installed (nil until checked).
@@ -101,19 +101,44 @@ final class NewsStore: ObservableObject {
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main, using: refreshNow))
     }
 
-    // MARK: Derived
+    // MARK: Derived (cached — views ask for these many times per redraw)
+
+    private var promoCache: [String: Bool] = [:]
+    private var categoryCache: [String: NewsCategory] = [:]
+    private var bulletsCache: [String: [String]] = [:]
+    private var importanceCache: [String: Int] = [:]
+    private var shownCache: [NewsCategory: [Article]] = [:]
+    private var bigCache: [NewsCategory: [Article]] = [:]
+    private var bigCacheHour = -1
+    private var searchIndex: [String: String] = [:]
+
+    private func invalidateDerived() {
+        promoCache.removeAll(); categoryCache.removeAll(); bulletsCache.removeAll()
+        importanceCache.removeAll(); shownCache.removeAll(); bigCache.removeAll(); searchIndex.removeAll()
+    }
 
     func isPromotional(_ a: Article) -> Bool {
-        LocalHeuristics.isPromotional(a) || (summaries[a.link]?.promotional ?? false)
+        if let c = promoCache[a.link] { return c }
+        let v = LocalHeuristics.isPromotional(a) || (summaries[a.link]?.promotional ?? false)
+        promoCache[a.link] = v
+        return v
     }
     func category(_ a: Article) -> NewsCategory {
-        summaries[a.link]?.category ?? LocalHeuristics.category(a)
+        if let c = categoryCache[a.link] { return c }
+        let v = summaries[a.link]?.category ?? LocalHeuristics.category(a)
+        categoryCache[a.link] = v
+        return v
     }
     private func englishBullets(_ a: Article) -> [String] {
+        if let c = bulletsCache[a.link] { return c }
+        let v: [String]
         if let info = summaries[a.link] {
-            return info.bullets ?? LocalHeuristics.sentences(info.summary, max: 3)
+            v = info.bullets ?? LocalHeuristics.sentences(info.summary, max: 3)
+        } else {
+            v = LocalHeuristics.bullets(a)
         }
-        return LocalHeuristics.bullets(a)
+        bulletsCache[a.link] = v
+        return v
     }
 
     func title(_ a: Article) -> String { localized(a.title) }
@@ -124,7 +149,10 @@ final class NewsStore: ObservableObject {
     }
 
     private func shown(_ cat: NewsCategory) -> [Article] {
-        articles.filter { !isPromotional($0) && (cat == .all || category($0) == cat) }
+        if let c = shownCache[cat] { return c }
+        let v = articles.filter { !isPromotional($0) && (cat == .all || category($0) == cat) }
+        shownCache[cat] = v
+        return v
     }
 
     // MARK: Search
@@ -136,15 +164,19 @@ final class NewsStore: ObservableObject {
         var seen = Set<String>()
         return (articles + bookmarks)
             .filter { seen.insert($0.link).inserted && !isPromotional($0) && (cat == .all || category($0) == cat) }
-            .filter { a in
-                let en = englishBullets(a)
-                let hay = ([a.title, a.excerpt, a.source?.name ?? ""] + en
-                           + ([a.title] + en).compactMap { translations[$0] })
-                    .joined(separator: " ").lowercased()
-                return words.allSatisfy(hay.contains)
-            }
+            .filter { a in words.allSatisfy(searchText(a).contains) }
             .sorted { $0.date > $1.date }
             .prefix(100).map { $0 }
+    }
+
+    /// Lowercased English + Korean text of a story, built once per story.
+    private func searchText(_ a: Article) -> String {
+        if let c = searchIndex[a.link] { return c }
+        let en = englishBullets(a)
+        let v = ([a.title, a.excerpt, a.source?.name ?? ""] + en + ([a.title] + en).compactMap { translations[$0] })
+            .joined(separator: " ").lowercased()
+        searchIndex[a.link] = v
+        return v
     }
 
     // MARK: Bookmarks
@@ -264,6 +296,7 @@ final class NewsStore: ObservableObject {
     private var coverageCache: (String, [String: Int])?
 
     func importance(_ a: Article) -> Int {
+        if let c = importanceCache[a.link] { return c }
         let r = NSRange(a.title.startIndex..., in: a.title)
         var score = 0
         if a.source?.official == true { score += 2 }
@@ -271,6 +304,7 @@ final class NewsStore: ObservableObject {
         if Self.launchWords.firstMatch(in: a.title, range: r) != nil { score += 2 }
         if storyKeys(a).contains(where: { (coverage[$0] ?? 0) >= 2 }) { score += 1 }
         if summaries[a.link]?.major == true { score += 3 }
+        importanceCache[a.link] = score
         return score
     }
 
@@ -278,6 +312,16 @@ final class NewsStore: ObservableObject {
 
     /// Pinned headline stories from the last 5 days, one per story, official posts preferred.
     func bigNews(_ cat: NewsCategory) -> [Article] {
+        // The 5-day window moves with time, so the cache is also refreshed every hour.
+        let hour = Int(Date().timeIntervalSince1970 / 3600)
+        if hour != bigCacheHour { bigCache.removeAll(); bigCacheHour = hour }
+        if let c = bigCache[cat] { return c }
+        let v = computeBigNews(cat)
+        bigCache[cat] = v
+        return v
+    }
+
+    private func computeBigNews(_ cat: NewsCategory) -> [Article] {
         let cutoff = Date().addingTimeInterval(-5 * 24 * 3600)
         let candidates = shown(cat).filter { $0.date > cutoff && isBig($0) }
             .sorted { (importance($0), $0.source?.official == true ? 1 : 0, $0.date)
