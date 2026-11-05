@@ -66,6 +66,20 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
+    /// Once a day: the morning briefing.
+    func announceBriefing(title: String, headline: String, points: [String]) async {
+        let day = Calendar.current.startOfDay(for: Date()).timeIntervalSince1970
+        guard UserDefaults.standard.double(forKey: "briefingNotifiedDay") != day, await isAuthorized() else { return }
+        UserDefaults.standard.set(day, forKey: "briefingNotifiedDay")
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.subtitle = headline
+        content.body = points.prefix(4).map { "• " + $0 }.joined(separator: "\n")
+        content.sound = .default
+        content.threadIdentifier = "briefing"
+        try? await center.add(UNNotificationRequest(identifier: "briefing-\(Int(day))", content: content, trigger: nil))
+    }
+
     // MARK: UNUserNotificationCenterDelegate
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
